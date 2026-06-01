@@ -1,89 +1,18 @@
 import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import { matchesQuery } from "../../shared/matchesQuery";
 import { apiQueue } from "../api/apiQueue";
 import type { Side } from "../types/items";
-
-const PAGE_SIZE = 20;
-/** Matches server MAX_LIMIT in server/index.ts */
-const MAX_FETCH_SIZE = 100;
-
-function pageOverlapsRange(page: number, startIndex: number, endIndex: number): boolean {
-  if (endIndex < startIndex) return true;
-  const pageStart = page * PAGE_SIZE;
-  const pageEnd = pageStart + PAGE_SIZE - 1;
-  return pageEnd >= startIndex && pageStart <= endIndex;
-}
-
-function rangeOverlapsRequest(startIndex: number, endIndex: number, offset: number, limit: number): boolean {
-  if (endIndex < startIndex || limit <= 0) return false;
-  const requestEnd = offset + limit - 1;
-  return requestEnd >= startIndex && offset <= endIndex;
-}
-
-function indexOverlapsRange(index: number, startIndex: number, endIndex: number): boolean {
-  return endIndex >= startIndex && index >= startIndex && index <= endIndex;
-}
-
-type FetchChunk = { offset: number; limit: number; pages: number[] };
-
-function matchesQuery(id: string, query: string): boolean {
-  return query === "" || id.includes(query);
-}
-
-function buildFetchChunks(firstPage: number, lastPage: number): FetchChunk[] {
-  const pagesPerChunk = Math.floor(MAX_FETCH_SIZE / PAGE_SIZE);
-  const chunks: FetchChunk[] = [];
-
-  for (let page = firstPage; page <= lastPage; ) {
-    const chunkEndPage = Math.min(lastPage, page + pagesPerChunk - 1);
-    const pageCount = chunkEndPage - page + 1;
-    chunks.push({
-      offset: page * PAGE_SIZE,
-      limit: pageCount * PAGE_SIZE,
-      pages: Array.from({ length: pageCount }, (_value, index) => page + index)
-    });
-    page = chunkEndPage + 1;
-  }
-
-  return chunks;
-}
-
-function removeIdFromCache(
-  cache: Record<number, string>,
-  id: string
-): { next: Record<number, string>; removedIndex: number | null } {
-  const entries = Object.entries(cache)
-    .map(([index, itemId]) => [Number(index), itemId] as const)
-    .sort(([left], [right]) => left - right);
-  const removedAt = entries.findIndex(([, itemId]) => itemId === id);
-  if (removedAt < 0) return { next: cache, removedIndex: null };
-
-  const removedIndex = entries[removedAt][0];
-  const next: Record<number, string> = {};
-
-  for (const [index, itemId] of entries) {
-    if (itemId === id) continue;
-    next[index > removedIndex ? index - 1 : index] = itemId;
-  }
-
-  return { next, removedIndex };
-}
-
-function invalidatePagesFrom(page: number, loadedPages: Set<number>) {
-  for (const loadedPage of loadedPages) {
-    if (loadedPage >= page) loadedPages.delete(loadedPage);
-  }
-}
-
-function keepItemsBeforePage(cache: Record<number, string>, beforePage: number): Record<number, string> {
-  const kept: Record<number, string> = {};
-  for (const [index, itemId] of Object.entries(cache)) {
-    const numericIndex = Number(index);
-    if (Math.floor(numericIndex / PAGE_SIZE) < beforePage) {
-      kept[numericIndex] = itemId;
-    }
-  }
-  return kept;
-}
+import {
+  buildFetchChunks,
+  indexOverlapsRange,
+  invalidatePagesFrom,
+  keepItemsBeforePage,
+  PAGE_SIZE,
+  pageOverlapsRange,
+  rangeOverlapsRequest,
+  removeIdFromCache,
+  type FetchChunk
+} from "./pagingHelpers";
 
 export function usePagedItems(side: Side, query: string) {
   const itemsRef = useRef<Record<number, string>>({});
@@ -169,16 +98,27 @@ export function usePagedItems(side: Side, query: string) {
     }
   }, [syncLoading]);
 
+  const reconcileVisibleAfterAdd = useCallback(() => {
+    if (side !== "available") return;
+
+    const { start, end } = requestedRangeRef.current;
+    if (end >= start) {
+      loadRangeRef.current(start, end);
+    }
+  }, [side]);
+
   useEffect(() => {
     const unsubscribe = apiQueue.subscribe((reason) => {
-      if (reason === "add" || reason === "selectionFailed") {
+      if (reason === "selectionFailed") {
         invalidateAndReloadVisible();
+      } else if (reason === "add") {
+        reconcileVisibleAfterAdd();
       }
     });
     return () => {
       unsubscribe();
     };
-  }, [invalidateAndReloadVisible]);
+  }, [invalidateAndReloadVisible, reconcileVisibleAfterAdd]);
 
   useEffect(() => {
     const version = requestVersion.current + 1;
@@ -295,6 +235,39 @@ export function usePagedItems(side: Side, query: string) {
     [bumpRender, query, side]
   );
 
+  const optimisticAdd = useCallback(
+    (ids: string[]) => {
+      if (side !== "available") return;
+
+      const { start, end } = requestedRangeRef.current;
+      let shouldPaint = false;
+
+      let added = 0;
+
+      for (const id of ids) {
+        if (!matchesQuery(id, query)) continue;
+
+        const index = totalRef.current;
+        itemsRef.current[index] = id;
+        loadedPages.current.add(Math.floor(index / PAGE_SIZE));
+        totalRef.current += 1;
+        added += 1;
+
+        if (indexOverlapsRange(index, start, end)) {
+          shouldPaint = true;
+        }
+      }
+
+      if (added > 0) {
+        setTotal(totalRef.current);
+      }
+      if (shouldPaint) {
+        bumpRender();
+      }
+    },
+    [bumpRender, query, side]
+  );
+
   const reorderLoadedItems = useCallback(
     (orderedIds: string[]) => {
       const movingIds = new Set(orderedIds);
@@ -318,6 +291,7 @@ export function usePagedItems(side: Side, query: string) {
     getItem,
     loading,
     loadRange,
+    optimisticAdd,
     optimisticAppend,
     optimisticRemove,
     optimisticReturn,

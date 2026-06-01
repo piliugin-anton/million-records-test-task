@@ -18,6 +18,7 @@ export function App() {
   const handleAdd = () => {
     if (addPreview.length === 0) return;
     apiQueue.add(addPreview);
+    available.optimisticAdd(addPreview);
     setNewId("");
   };
 

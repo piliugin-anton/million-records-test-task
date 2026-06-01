@@ -9,6 +9,8 @@
     "dev:client": "vite --host 0.0.0.0",
     "build": "tsc -p tsconfig.json && tsc -p tsconfig.server.json && vite build",
     "start": "node dist/server/index.js",
+    "test": "vitest",
+    "test:run": "vitest run",
     "bench:scroll": "node scripts/scroll-bench.mjs"
   },
   "dependencies": {
@@ -29,6 +31,9 @@
     "@types/node": "^25.9.1",
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
-    "playwright": "^1.60.0"
+    "@types/supertest": "^7.2.0",
+    "playwright": "^1.60.0",
+    "supertest": "^7.2.2",
+    "vitest": "^4.1.8"
   }
 }

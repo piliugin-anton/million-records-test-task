@@ -13,7 +13,7 @@ class ApiQueue {
 
   constructor() {
     window.setInterval(() => void this.flushReadsAndChanges(), 1000);
-    window.setInterval(() => void this.flushAdds(), 10000);
+    window.setInterval(() => void this.flushAdds(), 500);
   }
 
   subscribe(listener: QueueListener) {
@@ -56,6 +56,8 @@ class ApiQueue {
   }
 
   private async flushReadsAndChanges() {
+    await this.flushAdds();
+
     const selectionOps = this.selectionOps;
     const reorder = this.latestReorder;
     const fetches = this.fetches;

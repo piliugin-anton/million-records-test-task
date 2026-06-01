@@ -4,9 +4,9 @@
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": false,
-    "rootDir": "server",
+    "rootDir": ".",
     "outDir": "dist",
     "jsx": "react-jsx"
   },
-  "include": ["server"]
+  "include": ["server", "shared"]
 }
