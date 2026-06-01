@@ -85,8 +85,8 @@ export function Pane(props: PaneProps) {
   };
 
   return (
-    <section className="flex min-h-0 flex-col overflow-hidden rounded-lg border border-[#d7ddd9] bg-white">
-      <div className="flex items-center justify-between gap-3 border-b border-[#e5e9e6] p-3.5 max-[860px]:flex-col max-[860px]:items-stretch">
+    <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-[#d7ddd9] bg-white">
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e9e6] p-3.5 max-[860px]:flex-col max-[860px]:items-stretch">
         <div>
           <h2 className="m-0 text-lg leading-tight">{title}</h2>
           <span className="mt-0.5 block text-[13px] text-[#67716a]">

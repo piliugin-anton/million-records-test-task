@@ -37,8 +37,8 @@ export function App() {
   };
 
   return (
-    <main className="flex min-h-screen min-w-80 flex-col gap-[18px] bg-[#eef1eb] p-6 font-sans text-[#17201b] antialiased max-[860px]:p-3.5">
-      <header className="flex items-center justify-between gap-[18px] max-[860px]:flex-col max-[860px]:items-stretch">
+    <main className="flex h-screen min-w-80 flex-col gap-[18px] overflow-hidden bg-[#eef1eb] p-6 font-sans text-[#17201b] antialiased max-[860px]:p-3.5">
+      <header className="flex shrink-0 items-center justify-between gap-[18px] max-[860px]:flex-col max-[860px]:items-stretch">
         <div>
           <h1 className="m-0 text-[28px] leading-tight">Million Records</h1>
           <p className="mt-1.5 mb-0 text-[#5d675f]">Выбор, фильтрация и порядок элементов хранятся на Express-сервере в памяти.</p>
@@ -68,7 +68,7 @@ export function App() {
         </div>
       </header>
 
-      <div className="grid min-h-0 flex-1 grid-cols-2 gap-[18px] max-[860px]:grid-cols-1">
+      <div className="grid min-h-0 flex-1 grid-cols-2 grid-rows-1 gap-[18px] overflow-hidden max-[860px]:grid-cols-1 max-[860px]:grid-rows-2">
         <Pane
           title="Все элементы"
           side="available"

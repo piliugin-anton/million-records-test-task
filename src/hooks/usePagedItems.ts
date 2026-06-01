@@ -9,27 +9,12 @@ export function usePagedItems(side: Side, query: string) {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const loadedPages = useRef(new Set<number>());
   const requestVersion = useRef(0);
   const pendingPages = useRef(new Set<number>());
 
-  useEffect(() => {
-    const unsubscribe = apiQueue.subscribe(() => setRefreshKey((value) => value + 1));
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  useEffect(() => {
-    const version = requestVersion.current + 1;
-    requestVersion.current = version;
-    pendingPages.current.clear();
-    setItemsByIndex({});
-    setTotal(0);
-    void loadPage(0, version);
-  }, [query, side, refreshKey]);
-
   const loadPage = useCallback(async (page: number, version = requestVersion.current) => {
-    if (page < 0 || pendingPages.current.has(page)) return;
+    if (page < 0 || loadedPages.current.has(page) || pendingPages.current.has(page)) return;
     pendingPages.current.add(page);
     setLoading(true);
 
@@ -45,11 +30,29 @@ export function usePagedItems(side: Side, query: string) {
         return next;
       });
       setTotal(data.total);
+      loadedPages.current.add(page);
     }
 
     pendingPages.current.delete(page);
     setLoading(false);
   }, [query, side]);
+
+  useEffect(() => {
+    const unsubscribe = apiQueue.subscribe(() => setRefreshKey((value) => value + 1));
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    const version = requestVersion.current + 1;
+    requestVersion.current = version;
+    loadedPages.current.clear();
+    pendingPages.current.clear();
+    setItemsByIndex({});
+    setTotal(0);
+    void loadPage(0, version);
+  }, [loadPage, refreshKey]);
 
   const loadRange = useCallback((startIndex: number, endIndex: number) => {
     if (endIndex < startIndex) return;
@@ -58,20 +61,14 @@ export function usePagedItems(side: Side, query: string) {
     const lastPage = Math.floor(Math.max(0, endIndex) / PAGE_SIZE);
 
     for (let page = firstPage; page <= lastPage; page += 1) {
-      const pageStart = page * PAGE_SIZE;
-      const pageEnd = pageStart + PAGE_SIZE - 1;
-      const hasFullPage = Array.from({ length: PAGE_SIZE }, (_value, index) => pageStart + index)
-        .every((index) => index > total - 1 || itemsByIndex[index] !== undefined);
-
-      if (!hasFullPage && pageStart <= Math.max(total - 1, pageEnd)) {
-        void loadPage(page);
-      }
+      void loadPage(page);
     }
-  }, [itemsByIndex, loadPage, total]);
+  }, [loadPage]);
 
   const getItem = useCallback((index: number) => itemsByIndex[index], [itemsByIndex]);
 
   const optimisticRemove = useCallback((id: string) => {
+    loadedPages.current.clear();
     pendingPages.current.clear();
     setItemsByIndex({});
     setTotal((value) => Math.max(0, value - 1));
