@@ -3,7 +3,8 @@ import { Plus, RotateCw } from "lucide-react";
 import { apiQueue } from "../api/apiQueue";
 import { usePagedItems } from "../hooks/usePagedItems";
 import { parseIds } from "../utils/parseIds";
-import { iconButtonClass, primaryButtonClass, textInputClass } from "./buttonStyles";
+import { Button } from "./Button";
+import { Input } from "./Input";
 import { Pane } from "./Pane";
 
 export function App() {
@@ -47,19 +48,19 @@ export function App() {
           <p className="mt-1.5 mb-0 text-[#5d675f]">Выбор, фильтрация и порядок элементов хранятся на Express-сервере в памяти.</p>
         </div>
         <div className="flex items-center gap-2 max-[860px]:flex-wrap max-[860px]:items-stretch">
-          <input
-            className={`${textInputClass} w-[220px] max-[860px]:min-w-[180px] max-[860px]:flex-1`}
+          <Input
+            className="w-[220px] max-[860px]:min-w-[180px] max-[860px]:flex-1"
             value={newId}
             onChange={(event) => setNewId(event.target.value)}
             onKeyDown={(event) => event.key === "Enter" && handleAdd()}
             placeholder="Новый ID"
           />
-          <button className={primaryButtonClass} onClick={handleAdd} disabled={addPreview.length === 0}>
+          <Button variant="primary" onClick={handleAdd} disabled={addPreview.length === 0}>
             <Plus size={18} />
             Добавить
-          </button>
-          <button
-            className={iconButtonClass}
+          </Button>
+          <Button
+            variant="icon"
             onClick={() => {
               available.refresh();
               selected.refresh();
@@ -67,7 +68,7 @@ export function App() {
             title="Обновить списки"
           >
             <RotateCw size={18} />
-          </button>
+          </Button>
         </div>
       </header>
 

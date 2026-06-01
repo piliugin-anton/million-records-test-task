@@ -2,18 +2,23 @@ import type { FetchParams, ItemsResponse } from "../types/items";
 
 export type SyncReason = "add" | "selectionFailed";
 
+const READ_FLUSH_MS = 1_000;
+/** Adds are batched separately from reads/changes; selection may lag until the next add flush. */
+const ADD_FLUSH_MS = 10_000;
+
 type QueueListener = (reason: SyncReason) => void;
 
-class ApiQueue {
+export class ApiQueue {
   private addIds = new Set<string>();
   private selectionOps = new Map<string, boolean>();
   private latestReorder: string[] | null = null;
   private fetches = new Map<string, { params: FetchParams; resolvers: Array<(value: ItemsResponse) => void> }>();
   private listeners = new Set<QueueListener>();
+  private addFlushInFlight = false;
 
   constructor() {
-    window.setInterval(() => void this.flushReadsAndChanges(), 1000);
-    window.setInterval(() => void this.flushAdds(), 500);
+    globalThis.setInterval(() => void this.flushReadsAndChanges(), READ_FLUSH_MS);
+    globalThis.setInterval(() => void this.flushAdds(), ADD_FLUSH_MS);
   }
 
   subscribe(listener: QueueListener) {
@@ -56,8 +61,6 @@ class ApiQueue {
   }
 
   private async flushReadsAndChanges() {
-    await this.flushAdds();
-
     const selectionOps = this.selectionOps;
     const reorder = this.latestReorder;
     const fetches = this.fetches;
@@ -118,17 +121,22 @@ class ApiQueue {
   }
 
   private async flushAdds() {
-    if (this.addIds.size === 0) return;
+    if (this.addIds.size === 0 || this.addFlushInFlight) return;
 
+    this.addFlushInFlight = true;
     const ids = [...this.addIds];
     this.addIds.clear();
 
-    await fetch("/api/items/add", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ids })
-    });
-    this.notify("add");
+    try {
+      await fetch("/api/items/add", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids })
+      });
+      this.notify("add");
+    } finally {
+      this.addFlushInFlight = false;
+    }
   }
 }
 
