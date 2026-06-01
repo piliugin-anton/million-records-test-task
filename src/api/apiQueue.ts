@@ -1,0 +1,127 @@
+import type { FetchParams, ItemsResponse } from "../types/items";
+
+type QueueListener = () => void;
+
+class ApiQueue {
+  private addIds = new Set<string>();
+  private selectionOps = new Map<string, boolean>();
+  private latestReorder: string[] | null = null;
+  private fetches = new Map<string, { params: FetchParams; resolvers: Array<(value: ItemsResponse) => void> }>();
+  private listeners = new Set<QueueListener>();
+
+  constructor() {
+    window.setInterval(() => void this.flushReadsAndChanges(), 1000);
+    window.setInterval(() => void this.flushAdds(), 10000);
+  }
+
+  subscribe(listener: QueueListener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    this.listeners.forEach((listener) => listener());
+  }
+
+  fetchItems(params: FetchParams) {
+    const key = `${params.side}|${params.query}|${params.offset}|${params.limit}`;
+    const queued = this.fetches.get(key);
+
+    return new Promise<ItemsResponse>((resolve) => {
+      if (queued) {
+        queued.resolvers.push(resolve);
+        return;
+      }
+
+      this.fetches.set(key, { params, resolvers: [resolve] });
+    });
+  }
+
+  add(values: string[]) {
+    values.map((value) => value.trim()).filter(Boolean).forEach((id) => this.addIds.add(id));
+  }
+
+  select(id: string) {
+    this.selectionOps.set(id, true);
+  }
+
+  unselect(id: string) {
+    this.selectionOps.set(id, false);
+  }
+
+  reorder(orderedVisibleIds: string[]) {
+    this.latestReorder = [...new Set(orderedVisibleIds)];
+  }
+
+  private async flushReadsAndChanges() {
+    const selectionOps = this.selectionOps;
+    const reorder = this.latestReorder;
+    const fetches = this.fetches;
+
+    this.selectionOps = new Map();
+    this.latestReorder = null;
+    this.fetches = new Map();
+
+    const writeRequests: Promise<unknown>[] = [];
+
+    if (selectionOps.size > 0) {
+      const select: string[] = [];
+      const unselect: string[] = [];
+      selectionOps.forEach((shouldSelect, id) => (shouldSelect ? select : unselect).push(id));
+      writeRequests.push(
+        fetch("/api/selection", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ select, unselect })
+        })
+      );
+    }
+
+    if (reorder && reorder.length > 0) {
+      writeRequests.push(
+        fetch("/api/selection/reorder", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ orderedIds: reorder })
+        })
+      );
+    }
+
+    if (writeRequests.length > 0) {
+      await Promise.allSettled(writeRequests);
+      this.notify();
+    }
+
+    if (fetches.size === 0) return;
+
+    await Promise.all(
+      [...fetches.values()].map(async ({ params, resolvers }) => {
+        const search = new URLSearchParams({
+          side: params.side,
+          query: params.query,
+          offset: String(params.offset),
+          limit: String(params.limit)
+        });
+        const response = await fetch(`/api/items?${search.toString()}`);
+        const data = (await response.json()) as ItemsResponse;
+        resolvers.forEach((resolve) => resolve(data));
+      })
+    );
+  }
+
+  private async flushAdds() {
+    if (this.addIds.size === 0) return;
+
+    const ids = [...this.addIds];
+    this.addIds.clear();
+
+    await fetch("/api/items/add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids })
+    });
+    this.notify();
+  }
+}
+
+export const apiQueue = new ApiQueue();
