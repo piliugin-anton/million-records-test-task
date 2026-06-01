@@ -1,0 +1,16 @@
+services:
+  backend:
+    build:
+      context: .
+      target: backend
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      target: nginx
+    ports:
+      - "8080:80"
+    depends_on:
+      - backend
+    restart: unless-stopped

@@ -64,14 +64,16 @@ export function createApp(initialState?: AppState) {
     res.json({ selectedCount: applyReorder(state, orderedIds) });
   });
 
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-  const clientDir = path.resolve(__dirname, "../client");
+  if (!process.env.API_ONLY) {
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const clientDir = path.resolve(__dirname, "../client");
 
-  app.use(express.static(clientDir));
-  app.get("/{*splat}", (_req, res) => {
-    res.sendFile(path.join(clientDir, "index.html"));
-  });
+    app.use(express.static(clientDir));
+    app.get("/{*splat}", (_req, res) => {
+      res.sendFile(path.join(clientDir, "index.html"));
+    });
+  }
 
   return { app, state };
 }
