@@ -14,6 +14,8 @@ app.use(express.json({ limit: "1mb" }));
 const addedIds = new Set<string>();
 const selectedOrder: string[] = [];
 const selectedSet = new Set<string>();
+/** Maintained incrementally so list requests do not scan 1M IDs for total. */
+let availableCount = INITIAL_COUNT;
 
 function normalizeId(value: unknown): string | null {
   const id = String(value ?? "").trim();
@@ -43,6 +45,13 @@ function parseListQuery(req: express.Request) {
 }
 
 function getSelectedPage(query: string, offset: number, limit: number) {
+  if (query === "") {
+    return {
+      items: selectedOrder.slice(offset, offset + limit),
+      total: selectedOrder.length
+    };
+  }
+
   const items: string[] = [];
   let skipped = 0;
   let total = 0;
@@ -74,6 +83,22 @@ function visitAvailableIds(query: string, visitor: (id: string) => boolean | voi
 }
 
 function getAvailablePage(query: string, offset: number, limit: number) {
+  if (query === "") {
+    const items: string[] = [];
+    let skipped = 0;
+
+    visitAvailableIds(query, (id) => {
+      if (skipped < offset) {
+        skipped += 1;
+        return;
+      }
+      items.push(id);
+      if (items.length >= limit) return false;
+    });
+
+    return { items, total: availableCount };
+  }
+
   const items: string[] = [];
   let skipped = 0;
   let total = 0;
@@ -120,6 +145,7 @@ app.post("/api/items/add", (req, res) => {
     seenInRequest.add(id);
     addedIds.add(id);
     added.push(id);
+    if (!selectedSet.has(id)) availableCount += 1;
   }
 
   res.json({ added, skipped });
@@ -135,6 +161,7 @@ app.post("/api/selection", (req, res) => {
     selectedSet.delete(id);
     const index = selectedOrder.indexOf(id);
     if (index >= 0) selectedOrder.splice(index, 1);
+    availableCount += 1;
   }
 
   for (const value of select) {
@@ -142,6 +169,7 @@ app.post("/api/selection", (req, res) => {
     if (!id || !itemExists(id) || selectedSet.has(id)) continue;
     selectedSet.add(id);
     selectedOrder.push(id);
+    availableCount -= 1;
   }
 
   res.json({ selectedCount: selectedOrder.length });

@@ -24,11 +24,13 @@ export function App() {
   const handleSelect = (id: string) => {
     apiQueue.select(id);
     available.optimisticRemove(id);
+    selected.optimisticAppend(id);
   };
 
   const handleUnselect = (id: string) => {
     apiQueue.unselect(id);
     selected.optimisticRemove(id);
+    available.optimisticReturn(id);
   };
 
   const handleReorder = (nextItems: string[]) => {

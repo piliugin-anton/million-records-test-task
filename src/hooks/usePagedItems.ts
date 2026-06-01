@@ -19,7 +19,15 @@ function rangeOverlapsRequest(startIndex: number, endIndex: number, offset: numb
   return requestEnd >= startIndex && offset <= endIndex;
 }
 
+function indexOverlapsRange(index: number, startIndex: number, endIndex: number): boolean {
+  return endIndex >= startIndex && index >= startIndex && index <= endIndex;
+}
+
 type FetchChunk = { offset: number; limit: number; pages: number[] };
+
+function matchesQuery(id: string, query: string): boolean {
+  return query === "" || id.includes(query);
+}
 
 function buildFetchChunks(firstPage: number, lastPage: number): FetchChunk[] {
   const pagesPerChunk = Math.floor(MAX_FETCH_SIZE / PAGE_SIZE);
@@ -39,6 +47,44 @@ function buildFetchChunks(firstPage: number, lastPage: number): FetchChunk[] {
   return chunks;
 }
 
+function removeIdFromCache(
+  cache: Record<number, string>,
+  id: string
+): { next: Record<number, string>; removedIndex: number | null } {
+  const entries = Object.entries(cache)
+    .map(([index, itemId]) => [Number(index), itemId] as const)
+    .sort(([left], [right]) => left - right);
+  const removedAt = entries.findIndex(([, itemId]) => itemId === id);
+  if (removedAt < 0) return { next: cache, removedIndex: null };
+
+  const removedIndex = entries[removedAt][0];
+  const next: Record<number, string> = {};
+
+  for (const [index, itemId] of entries) {
+    if (itemId === id) continue;
+    next[index > removedIndex ? index - 1 : index] = itemId;
+  }
+
+  return { next, removedIndex };
+}
+
+function invalidatePagesFrom(page: number, loadedPages: Set<number>) {
+  for (const loadedPage of loadedPages) {
+    if (loadedPage >= page) loadedPages.delete(loadedPage);
+  }
+}
+
+function keepItemsBeforePage(cache: Record<number, string>, beforePage: number): Record<number, string> {
+  const kept: Record<number, string> = {};
+  for (const [index, itemId] of Object.entries(cache)) {
+    const numericIndex = Number(index);
+    if (Math.floor(numericIndex / PAGE_SIZE) < beforePage) {
+      kept[numericIndex] = itemId;
+    }
+  }
+  return kept;
+}
+
 export function usePagedItems(side: Side, query: string) {
   const itemsRef = useRef<Record<number, string>>({});
   const [, setRenderKey] = useState(0);
@@ -50,6 +96,7 @@ export function usePagedItems(side: Side, query: string) {
   const pendingPages = useRef(new Set<number>());
   const requestedRangeRef = useRef({ start: 0, end: -1 });
   const totalRef = useRef(0);
+  const loadRangeRef = useRef<(startIndex: number, endIndex: number) => void>(() => {});
 
   const bumpRender = useCallback(() => {
     setRenderKey((value) => value + 1);
@@ -109,12 +156,29 @@ export function usePagedItems(side: Side, query: string) {
     [bumpRender, query, side, syncLoading]
   );
 
+  const invalidateAndReloadVisible = useCallback(() => {
+    requestVersion.current += 1;
+    loadedPages.current.clear();
+    pendingPages.current.clear();
+    itemsRef.current = {};
+    syncLoading();
+
+    const { start, end } = requestedRangeRef.current;
+    if (end >= start) {
+      loadRangeRef.current(start, end);
+    }
+  }, [syncLoading]);
+
   useEffect(() => {
-    const unsubscribe = apiQueue.subscribe(() => setRefreshKey((value) => value + 1));
+    const unsubscribe = apiQueue.subscribe((reason) => {
+      if (reason === "add" || reason === "selectionFailed") {
+        invalidateAndReloadVisible();
+      }
+    });
     return () => {
       unsubscribe();
     };
-  }, []);
+  }, [invalidateAndReloadVisible]);
 
   useEffect(() => {
     const version = requestVersion.current + 1;
@@ -144,19 +208,91 @@ export function usePagedItems(side: Side, query: string) {
     [loadChunk]
   );
 
+  loadRangeRef.current = loadRange;
+
   const getItem = useCallback((index: number) => itemsRef.current[index], []);
 
   const optimisticRemove = useCallback(
     (id: string) => {
+      const { next, removedIndex } = removeIdFromCache(itemsRef.current, id);
+
+      if (removedIndex !== null) {
+        if (side === "available") {
+          const fromPage = Math.floor(removedIndex / PAGE_SIZE);
+          itemsRef.current = keepItemsBeforePage(next, fromPage);
+          invalidatePagesFrom(fromPage, loadedPages.current);
+        } else {
+          itemsRef.current = next;
+          const lastIndex = Object.keys(next).reduce(
+            (max, key) => Math.max(max, Number(key)),
+            -1
+          );
+          if (lastIndex >= 0) {
+            loadedPages.current.delete(Math.floor(lastIndex / PAGE_SIZE));
+          }
+        }
+      }
+
+      totalRef.current = Math.max(0, totalRef.current - 1);
+      setTotal(totalRef.current);
+
+      const { start, end } = requestedRangeRef.current;
+      let shouldPaint = false;
+      if (removedIndex !== null) {
+        if (side === "selected") {
+          shouldPaint = indexOverlapsRange(removedIndex, start, end);
+        } else {
+          const fromPage = Math.floor(removedIndex / PAGE_SIZE);
+          shouldPaint =
+            indexOverlapsRange(removedIndex, start, end) ||
+            pageOverlapsRange(fromPage, start, end);
+        }
+      }
+      if (shouldPaint) {
+        bumpRender();
+      }
+
+      if (side === "available" && removedIndex !== null) {
+        const fromPage = Math.floor(removedIndex / PAGE_SIZE);
+        if (pageOverlapsRange(fromPage, start, end)) {
+          loadRangeRef.current(Math.max(start, fromPage * PAGE_SIZE), end);
+        }
+      }
+    },
+    [bumpRender, side]
+  );
+
+  const optimisticReturn = useCallback(
+    (id: string) => {
+      if (side !== "available" || !matchesQuery(id, query)) return;
+
+      totalRef.current += 1;
+      setTotal(totalRef.current);
+      itemsRef.current = {};
       loadedPages.current.clear();
       pendingPages.current.clear();
-      itemsRef.current = {};
-      requestedRangeRef.current = { start: 0, end: -1 };
-      setTotal((value) => Math.max(0, value - 1));
-      totalRef.current = Math.max(0, totalRef.current - 1);
+      bumpRender();
+
+      const { start, end } = requestedRangeRef.current;
+      if (end >= start) {
+        loadRangeRef.current(start, end);
+      }
+    },
+    [bumpRender, query, side]
+  );
+
+  const optimisticAppend = useCallback(
+    (id: string) => {
+      if (side !== "selected" || !matchesQuery(id, query)) return;
+
+      const index = totalRef.current;
+      itemsRef.current[index] = id;
+      loadedPages.current.add(Math.floor(index / PAGE_SIZE));
+      totalRef.current += 1;
+      setTotal(totalRef.current);
       bumpRender();
     },
-    [bumpRender]
+    [bumpRender, query, side]
   );
 
   const reorderLoadedItems = useCallback(
@@ -182,7 +318,9 @@ export function usePagedItems(side: Side, query: string) {
     getItem,
     loading,
     loadRange,
+    optimisticAppend,
     optimisticRemove,
+    optimisticReturn,
     refresh: () => setRefreshKey((value) => value + 1),
     reorderLoadedItems,
     total

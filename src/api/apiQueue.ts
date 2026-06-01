@@ -1,6 +1,8 @@
 import type { FetchParams, ItemsResponse } from "../types/items";
 
-type QueueListener = () => void;
+export type SyncReason = "add" | "selectionFailed";
+
+type QueueListener = (reason: SyncReason) => void;
 
 class ApiQueue {
   private addIds = new Set<string>();
@@ -19,8 +21,8 @@ class ApiQueue {
     return () => this.listeners.delete(listener);
   }
 
-  private notify() {
-    this.listeners.forEach((listener) => listener());
+  private notify(reason: SyncReason) {
+    this.listeners.forEach((listener) => listener(reason));
   }
 
   fetchItems(params: FetchParams) {
@@ -63,11 +65,13 @@ class ApiQueue {
     this.fetches = new Map();
 
     const writeRequests: Promise<unknown>[] = [];
+    let selectionRequestIndex = -1;
 
     if (selectionOps.size > 0) {
       const select: string[] = [];
       const unselect: string[] = [];
       selectionOps.forEach((shouldSelect, id) => (shouldSelect ? select : unselect).push(id));
+      selectionRequestIndex = writeRequests.length;
       writeRequests.push(
         fetch("/api/selection", {
           method: "POST",
@@ -88,8 +92,10 @@ class ApiQueue {
     }
 
     if (writeRequests.length > 0) {
-      await Promise.allSettled(writeRequests);
-      this.notify();
+      const results = await Promise.allSettled(writeRequests);
+      if (selectionRequestIndex >= 0 && results[selectionRequestIndex]?.status === "rejected") {
+        this.notify("selectionFailed");
+      }
     }
 
     if (fetches.size === 0) return;
@@ -120,7 +126,7 @@ class ApiQueue {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ids })
     });
-    this.notify();
+    this.notify("add");
   }
 }
 
