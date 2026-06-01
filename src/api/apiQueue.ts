@@ -1,5 +1,7 @@
 import type { FetchParams, ItemsResponse } from "../types/items";
 
+const api = (path: string) => `${import.meta.env.BASE_URL}api${path}`;
+
 export type SyncReason = "add" | "selectionFailed";
 
 const READ_FLUSH_MS = 1_000;
@@ -78,7 +80,7 @@ export class ApiQueue {
       selectionOps.forEach((shouldSelect, id) => (shouldSelect ? select : unselect).push(id));
       selectionRequestIndex = writeRequests.length;
       writeRequests.push(
-        fetch("/api/selection", {
+        fetch(api("/selection"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ select, unselect })
@@ -88,7 +90,7 @@ export class ApiQueue {
 
     if (reorder && reorder.length > 0) {
       writeRequests.push(
-        fetch("/api/selection/reorder", {
+        fetch(api("/selection/reorder"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ orderedIds: reorder })
@@ -113,7 +115,7 @@ export class ApiQueue {
           offset: String(params.offset),
           limit: String(params.limit)
         });
-        const response = await fetch(`/api/items?${search.toString()}`);
+        const response = await fetch(`${api("/items")}?${search.toString()}`);
         const data = (await response.json()) as ItemsResponse;
         resolvers.forEach((resolve) => resolve(data));
       })
@@ -128,7 +130,7 @@ export class ApiQueue {
     this.addIds.clear();
 
     try {
-      await fetch("/api/items/add", {
+      await fetch(api("/items/add"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids })

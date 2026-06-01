@@ -4,6 +4,8 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 FROM deps AS build
+ARG VITE_BASE=/million-records-test-task/
+ENV VITE_BASE=$VITE_BASE
 COPY . .
 RUN npm run build
 
