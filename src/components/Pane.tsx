@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, GripVertical, Search } from "lucide-react";
 import { iconButtonClass } from "./buttonStyles";
 import type { Side } from "../types/items";
@@ -6,6 +6,8 @@ import type { Side } from "../types/items";
 const ROW_HEIGHT = 52;
 const OVERSCAN = 8;
 const MAX_SCROLL_HEIGHT = 8_000_000;
+
+type VisibleRange = { startIndex: number; endIndex: number };
 
 type PaneProps = {
   title: string;
@@ -20,16 +22,92 @@ type PaneProps = {
   onReorder?: (items: string[]) => void;
 };
 
+function computeVisibleRange(logicalScrollTop: number, total: number, viewportHeight: number): VisibleRange {
+  if (total === 0 || viewportHeight === 0) {
+    return { startIndex: 0, endIndex: -1 };
+  }
+
+  const firstVisible = Math.floor(logicalScrollTop / ROW_HEIGHT);
+  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT);
+  const startIndex = Math.max(0, firstVisible - OVERSCAN);
+  const endIndex = Math.min(total - 1, firstVisible + visibleCount + OVERSCAN);
+
+  return { startIndex, endIndex };
+}
+
+type PaneRowProps = {
+  index: number;
+  top: number;
+  id: string | undefined;
+  side: Side;
+  draggedId: string | null;
+  onMove: (id: string) => void;
+  onDragStart: (id: string) => void;
+  onDragEnd: () => void;
+  onDrop: (targetId: string) => void;
+};
+
+const PaneRow = memo(function PaneRow(props: PaneRowProps) {
+  const { top, id, side, draggedId, onMove, onDragStart, onDragEnd, onDrop } = props;
+
+  return (
+    <div
+      className={[
+        "absolute left-0 right-0 flex h-12 items-center justify-between gap-2.5 rounded-md border px-2 py-0 pl-3 hover:border-[#dbe2dd] hover:bg-[#f5f7f5]",
+        id && draggedId === id ? "border-[#23685a] bg-[#e7f0ed]" : "border-transparent",
+        id ? "" : "pointer-events-none bg-[#f8faf8]"
+      ].join(" ")}
+      draggable={Boolean(id) && side === "selected"}
+      onDragStart={() => id && onDragStart(id)}
+      onDragEnd={onDragEnd}
+      onDragOver={(event) => side === "selected" && event.preventDefault()}
+      onDrop={() => id && onDrop(id)}
+      style={{ top }}
+    >
+      <div className="flex min-w-0 items-center gap-2.5">
+        {side === "selected" ? (
+          <GripVertical className="flex-none cursor-grab text-[#78827b]" size={18} />
+        ) : (
+          <span className="h-2 w-2 flex-none rounded-full bg-[#d29a3f]" />
+        )}
+        <span className="truncate whitespace-nowrap">{id ? `ID ${id}` : "Загрузка..."}</span>
+      </div>
+      {id ? (
+        <button className={iconButtonClass} onClick={() => onMove(id)} title={side === "selected" ? "Убрать" : "Выбрать"}>
+          {side === "selected" ? <ArrowLeft size={18} /> : <ArrowRight size={18} />}
+        </button>
+      ) : null}
+    </div>
+  );
+});
+
 export function Pane(props: PaneProps) {
   const { title, side, query, onQueryChange, getItem, total, loading, loadRange, onMove, onReorder } = props;
   const [draggedId, setDraggedId] = useState<string | null>(null);
   const [scrollTop, setScrollTop] = useState(0);
+  const [visibleRange, setVisibleRange] = useState<VisibleRange>({ startIndex: 0, endIndex: -1 });
   const [viewportHeight, setViewportHeight] = useState(0);
   const scrollerRef = useRef<HTMLDivElement | null>(null);
+  const scrollTopRef = useRef(0);
+  const scrollRafRef = useRef<number | null>(null);
+
   const totalContentHeight = total * ROW_HEIGHT;
   const scrollableHeight = totalContentHeight > 0 ? Math.min(totalContentHeight, MAX_SCROLL_HEIGHT) : viewportHeight;
   const scrollScale = totalContentHeight > 0 ? scrollableHeight / totalContentHeight : 1;
   const logicalScrollTop = scrollScale > 0 ? scrollTop / scrollScale : 0;
+
+  const windowOffsetY = scrollTop + visibleRange.startIndex * ROW_HEIGHT - logicalScrollTop;
+
+  const syncFromScroll = useCallback(() => {
+    const nextScrollTop = scrollTopRef.current;
+    const nextLogicalScrollTop = scrollScale > 0 ? nextScrollTop / scrollScale : 0;
+    const nextRange = computeVisibleRange(nextLogicalScrollTop, total, viewportHeight);
+
+    setScrollTop(nextScrollTop);
+    setVisibleRange((current) =>
+      current.startIndex === nextRange.startIndex && current.endIndex === nextRange.endIndex ? current : nextRange
+    );
+  }, [scrollScale, total, viewportHeight]);
 
   useEffect(() => {
     const scroller = scrollerRef.current;
@@ -44,18 +122,9 @@ export function Pane(props: PaneProps) {
     return () => resizeObserver.disconnect();
   }, []);
 
-  const visibleRange = useMemo(() => {
-    if (total === 0 || viewportHeight === 0) {
-      return { startIndex: 0, endIndex: -1 };
-    }
-
-    const firstVisible = Math.floor(logicalScrollTop / ROW_HEIGHT);
-    const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT);
-    const startIndex = Math.max(0, firstVisible - OVERSCAN);
-    const endIndex = Math.min(total - 1, firstVisible + visibleCount + OVERSCAN);
-
-    return { startIndex, endIndex };
-  }, [logicalScrollTop, total, viewportHeight]);
+  useEffect(() => {
+    syncFromScroll();
+  }, [syncFromScroll]);
 
   useEffect(() => {
     loadRange(visibleRange.startIndex, visibleRange.endIndex);
@@ -84,14 +153,33 @@ export function Pane(props: PaneProps) {
     setDraggedId(null);
   };
 
+  const handleScroll = useCallback(() => {
+    const scroller = scrollerRef.current;
+    if (!scroller) return;
+
+    scrollTopRef.current = scroller.scrollTop;
+    if (scrollRafRef.current !== null) return;
+
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      syncFromScroll();
+    });
+  }, [syncFromScroll]);
+
+  useEffect(() => {
+    return () => {
+      if (scrollRafRef.current !== null) {
+        cancelAnimationFrame(scrollRafRef.current);
+      }
+    };
+  }, []);
+
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden rounded-lg border border-[#d7ddd9] bg-white">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[#e5e9e6] p-3.5 max-[860px]:flex-col max-[860px]:items-stretch">
         <div>
           <h2 className="m-0 text-lg leading-tight">{title}</h2>
-          <span className="mt-0.5 block text-[13px] text-[#67716a]">
-            {total}
-          </span>
+          <span className="mt-0.5 block text-[13px] text-[#67716a]">{total}</span>
         </div>
         <label className="flex h-10 w-[42%] max-w-[260px] items-center gap-2 rounded-md border border-[#d7ddd9] bg-[#f4f6f4] px-2.5 max-[860px]:w-full max-[860px]:max-w-none">
           <Search className="flex-none text-[#64716a]" size={18} />
@@ -108,45 +196,28 @@ export function Pane(props: PaneProps) {
         ref={scrollerRef}
         className="min-h-0 flex-1 overflow-auto p-2"
         aria-label={title}
-        onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
+        onScroll={handleScroll}
       >
         <div className="relative" style={{ height: Math.max(scrollableHeight, viewportHeight) }}>
-          {virtualRows.map((index) => {
-            const id = getItem(index);
-            const logicalRowTop = index * ROW_HEIGHT;
-            const visualRowTop = scrollTop + (logicalRowTop - logicalScrollTop);
-
-            return (
-              <div
-                className={[
-                  "absolute left-0 right-0 flex h-12 items-center justify-between gap-2.5 rounded-md border px-2 py-0 pl-3 hover:border-[#dbe2dd] hover:bg-[#f5f7f5]",
-                  id && draggedId === id ? "border-[#23685a] bg-[#e7f0ed]" : "border-transparent",
-                  id ? "" : "pointer-events-none bg-[#f8faf8]"
-                ].join(" ")}
-                draggable={Boolean(id) && side === "selected"}
+          <div
+            className="absolute left-0 right-0"
+            style={{ transform: `translateY(${windowOffsetY}px)` }}
+          >
+            {virtualRows.map((index) => (
+              <PaneRow
                 key={index}
-                onDragStart={() => id && setDraggedId(id)}
+                index={index}
+                top={(index - visibleRange.startIndex) * ROW_HEIGHT}
+                id={getItem(index)}
+                side={side}
+                draggedId={draggedId}
+                onMove={onMove}
+                onDragStart={setDraggedId}
                 onDragEnd={() => setDraggedId(null)}
-                onDragOver={(event) => side === "selected" && event.preventDefault()}
-                onDrop={() => id && handleDrop(id)}
-                style={{ transform: `translateY(${visualRowTop}px)` }}
-              >
-                <div className="flex min-w-0 items-center gap-2.5">
-                  {side === "selected" ? (
-                    <GripVertical className="flex-none cursor-grab text-[#78827b]" size={18} />
-                  ) : (
-                    <span className="h-2 w-2 flex-none rounded-full bg-[#d29a3f]" />
-                  )}
-                  <span className="truncate whitespace-nowrap">{id ? `ID ${id}` : "Загрузка..."}</span>
-                </div>
-                {id ? (
-                  <button className={iconButtonClass} onClick={() => onMove(id)} title={side === "selected" ? "Убрать" : "Выбрать"}>
-                    {side === "selected" ? <ArrowLeft size={18} /> : <ArrowRight size={18} />}
-                  </button>
-                ) : null}
-              </div>
-            );
-          })}
+                onDrop={handleDrop}
+              />
+            ))}
+          </div>
 
           {total === 0 ? (
             <div className="flex h-11 items-center justify-center text-sm text-[#6d766f]">
