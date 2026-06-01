@@ -23,16 +23,16 @@ export function App() {
 
   const handleSelect = (id: string) => {
     apiQueue.select(id);
-    available.setItems((items) => items.filter((item) => item !== id));
+    available.optimisticRemove(id);
   };
 
   const handleUnselect = (id: string) => {
     apiQueue.unselect(id);
-    selected.setItems((items) => items.filter((item) => item !== id));
+    selected.optimisticRemove(id);
   };
 
   const handleReorder = (nextItems: string[]) => {
-    selected.setItems(nextItems);
+    selected.reorderLoadedItems(nextItems);
     apiQueue.reorder(nextItems);
   };
 
@@ -74,10 +74,10 @@ export function App() {
           side="available"
           query={availableQuery}
           onQueryChange={setAvailableQuery}
-          items={available.items}
+          getItem={available.getItem}
           total={available.total}
           loading={available.loading}
-          loadMore={available.loadMore}
+          loadRange={available.loadRange}
           onMove={handleSelect}
         />
         <Pane
@@ -85,10 +85,10 @@ export function App() {
           side="selected"
           query={selectedQuery}
           onQueryChange={setSelectedQuery}
-          items={selected.items}
+          getItem={selected.getItem}
           total={selected.total}
           loading={selected.loading}
-          loadMore={selected.loadMore}
+          loadRange={selected.loadRange}
           onMove={handleUnselect}
           onReorder={handleReorder}
         />
